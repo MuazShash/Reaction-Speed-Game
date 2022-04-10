@@ -2,12 +2,14 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <time.h>
 
 #define KEYBOARD 0xFF200100
 #define TIMER 0xFFFEC600
 #define LEDR 0xFF200000
 #define KEYS 0xFF200050
 #define SWITCHES 0xFF200040
+#define HEX 0xFF200020
 
 void disable_A9_interrupts (void);
 void set_A9_IRQ_stack (void);
@@ -19,7 +21,7 @@ void enable_A9_interrupts (void);
 void initPlayers(void);
 void mainMenu(void);
 void newRound(void);
-void scoreBoard(void);
+void scoreboard(void);
 
 /************************************************************************
  *               1v1 Reaction Speed Game
@@ -34,32 +36,38 @@ void scoreBoard(void);
 unsigned char byte1 = 0, byte2 = 0, byte3 = 0; //Stores the three most recent bytes sent by the ps/2 keyboard
 int difficulties[10] = {3000000, 5000000, 10000000, 15000000, 20000000, 40000000, 50000000, 60000000, 70000000, 100000000};
 int difficulty, rounds;
+volatile int ticks;
 
 struct player {
     bool fail;
     bool success;
     int points;
     char keys[4];
-    char targetKey;
+    char targetKey, pressedKey;
 } p1, p2;
 
 int main(void)
 {
+
     disable_A9_interrupts (); // disable interrupts in the A9 processor
     set_A9_IRQ_stack (); // initialize the stack pointer for IRQ mode
     config_GIC (); // configure the general interrupt controller
     config_Keyboard (); // configure Ps/2 Keyboard to generate interrupts
-    config_Timer(); //configure Private Timer to generate interrupts and loop every second
+    //config_Timer(); //configure Private Timer to generate interrupts and loop every second
     enable_A9_interrupts (); // enable interrupts in the A9 processor
+
+    time_t t;
+    srand((unsigned) time(&t));
 
     initPlayers();
     mainMenu();
+    config_Timer();
     while (1){
         printf("\nDifficulty: %d \n Rounds: %d", difficulty, rounds);
         //mainMenu();
         while(rounds >= 0) {
             newRound();
-            Scoreboard();
+            scoreboard();
         }
     } // wait for an interrupt
 
@@ -68,6 +76,7 @@ int main(void)
 void selectingDifficulty();
 void selectingRounds();
 
+//Displays and calls functions to select the number of rounds and starting difficulty
 void mainMenu(){
 
     selectingDifficulty();
@@ -75,7 +84,7 @@ void mainMenu(){
 
 
 }
-
+//Selects the starting difficulty of the game using the switches and key 0
 void selectingDifficulty(){
     int * keys_ptr = (int *) KEYS;
     volatile int switches, keys, leds;
@@ -107,7 +116,7 @@ void selectingDifficulty(){
         }
     }
 }
-
+//selects the number of rounds for the games using the switches and key0, key1 will bring you back to difficulty selection
 void selectingRounds(){
     printf("");
     int * keys_ptr = (int *) KEYS;
@@ -145,29 +154,97 @@ void selectingRounds(){
     }
 }
 
+//New round is configured and played here
 void newRound(){
 
+    p1.targetKey = p1.keys[rand()%4];
+    p2.targetKey = p2.keys[rand()%4];
+
+    volatile int *HEX3_HEX0_ptr = (int *) HEX;
+    int HEX_bits;
+
+    *HEX3_HEX0_ptr = 0;
+
+    if (p1.targetKey == 0x1D) { // W key
+        HEX_bits = 0b110111;
+        *HEX3_HEX0_ptr = HEX_bits;
+    }
+
+    else if (p1.targetKey == 0x1C) { //A key
+        HEX_bits = 0b111001;
+        *HEX3_HEX0_ptr = HEX_bits;
+    }
+    else if (p1.targetKey == 0x1B) { //S key
+        HEX_bits = 0b111110;
+        *HEX3_HEX0_ptr = HEX_bits;
+    }
+    else if (p1.targetKey == 0x23){ //D key
+        HEX_bits = 0b1111;
+        *HEX3_HEX0_ptr = HEX_bits;
+    }
+
+    ticks = 10;
+    while(ticks > 0){
+        if(!p1.fail && !p1.success && (p1.pressedKey == 0x1D || p1.pressedKey == 0x1C || p1.pressedKey == 0x1B || p1.pressedKey == 0x23)){
+            if(p1.pressedKey == p1.targetKey){
+                p1.success = true;
+                *(HEX3_HEX0_ptr) |= 0b1111111 << 8;
+            }
+            else{
+                p1.fail = true;
+                *(HEX3_HEX0_ptr) = 0b0;
+            }
+        }
+
+        if(!p2.fail && !p2.success && (p2.pressedKey == 0x75 || p2.pressedKey == 0x68 || p2.pressedKey == 0x72 || p2.pressedKey == 0x74)){
+            if(p2.pressedKey == p2.targetKey){
+                p2.success = true;
+                //*(HEX3_HEX0_ptr + 1) = 0b1111111;
+            }
+            else{
+                p2.fail = true;
+            }
+        }
+    }
+
+    rounds--;
+    return;
 }
 
-//Initializes player variables
-void initPlayers(){
-    p1.keys[0] = '1D';
-    p1.keys[1] = '1C';
-    p1.keys[2] = '1B';
-    p1.keys[3] = '23';
+void scoreboard(){
+    clock_t startTime = clock();
 
-    p1.points = 0;
+    while(clock() < startTime +300){
+
+    }
+    p1.pressedKey = 0;
     p1.fail = false;
     p1.success = false;
 
-    p2.keys[0] = '75';
-    p2.keys[1] = '68';
-    p2.keys[2] = '72';
-    p2.keys[3] = '74';
-
-    p2.points = 0;
+    p2.pressedKey = 0;
     p2.fail = false;
     p2.success = false;
+
+}
+//Initializes player variables
+void initPlayers(){
+    p1.keys[0] = 0x1D;
+    p1.keys[1] = 0x1C;
+    p1.keys[2] = 0x1B;
+    p1.keys[3] = 0x23;
+
+    p1.fail = false;
+    p1.success = false;
+    p1.pressedKey = 0;
+
+    p2.keys[0] = 0x75;
+    p2.keys[1] = 0x68;
+    p2.keys[2] = 0x72;
+    p2.keys[3] = 0x74;
+
+    p2.fail = false;
+    p2.success = false;
+    p2.pressedKey = 0;
 }
 
 /* setup the ps/2 keyboard interrupts in the FPGA */
@@ -180,8 +257,8 @@ void config_Keyboard()
 // Setup the A9 Private timer interrupts in the FPGA and initialize
 void config_Timer(){
     volatile int * timer_ptr = (int *) TIMER;
-    *(timer_ptr) = 200000000;
-    *(timer_ptr + 2) = 0b0; //CHANGE THIS LINE
+    *(timer_ptr) = difficulty;
+    *(timer_ptr + 2) = 0b111; //CHANGE THIS LINE
     //*((int*) LEDR) = 0b11111111;
 }
 
@@ -315,7 +392,7 @@ void keyboard_ISR( void )
     /* KEY base address */
     volatile int *keyboard_ptr = (int *) KEYBOARD;
     /* HEX display base address */
-    volatile int *HEX3_HEX0_ptr = (int *) 0xFF200020;
+    volatile int *HEX3_HEX0_ptr = (int *) HEX;
     int data, RVALID, HEX_bits;
 
     data = *(keyboard_ptr);
@@ -331,47 +408,47 @@ void keyboard_ISR( void )
 
     printf(" %hhx ", byte3);
     if (byte3 == 0x1D && byte2 != 0xF0) { // W key
-        HEX_bits = 0b110111;
-        *HEX3_HEX0_ptr = HEX_bits;
+        p1.pressedKey = 0x1D;
         printf(" W key entered");
     }
 
     if (byte3 == 0x1C && byte2 != 0xF0) { //A key
-        HEX_bits = 0b111001;
-        *HEX3_HEX0_ptr = HEX_bits;
+        p1.pressedKey = 0x1C;
         printf(" A key entered");
     }
     else if (byte3 == 0x1B && byte2 != 0xF0) { //S key
-        HEX_bits = 0b111110;
-        *HEX3_HEX0_ptr = HEX_bits;
+        p1.pressedKey = 0x1B;
         printf(" S key entered");
     }
     else if (byte3 == 0x23 && byte2 != 0xF0){ //D key
-        HEX_bits = 0b1111;
-        *HEX3_HEX0_ptr = HEX_bits;
+        p1.pressedKey = 0x23;
         printf(" D key entered");
     }
 
     if (byte3 == 0x75 && byte2 == 0xE0 && byte1 != 0xF0) { // Up key
         HEX_bits = 0b110111;
         *HEX3_HEX0_ptr = HEX_bits;
+        p2.pressedKey = 0x75;
         printf(" Up key entered");
     }
     else if (byte3 == 0x6B && byte2 == 0xE0 && byte1 != 0xF0) { // Left key
         HEX_bits = 0b111001;
         *HEX3_HEX0_ptr = HEX_bits;
+        p2.pressedKey = 0x6B;
         printf(" Left key entered");
     }
 
     else if (byte3 == 0x72 && byte2 == 0xE0 && byte1 != 0xF0) { // Down key
         HEX_bits = 0b111110;
         *HEX3_HEX0_ptr = HEX_bits;
+        p2.pressedKey = 0x72;
         printf(" Down key entered");
     }
 
     else if (byte3 == 0x74 && byte2 == 0xE0 && byte1 != 0xF0) { // Right key
         HEX_bits = 0b1111;
         *HEX3_HEX0_ptr = HEX_bits;
+        p2.pressedKey = 0x74;
         printf(" Up key entered");
     }
 
@@ -383,12 +460,13 @@ void timer_ISR(){
     int * timer_ptr = (int *) TIMER;
 
     if(*ledr_ptr == 1){
-        *ledr_ptr = 0b11111111;
+        *ledr_ptr = 0b1111111111;
     }
     else{
         *ledr_ptr = *ledr_ptr >> 1;
     }
 
+    ticks--;
     *(timer_ptr + 3) = 1;
 
 }
